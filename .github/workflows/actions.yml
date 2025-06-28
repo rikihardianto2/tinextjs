@@ -1,0 +1,139 @@
+# Nama alur kerja yang akan muncul di tab Actions di GitHub
+name: Security Scan and Vercel Deployment
+
+# Pemicu (trigger) untuk menjalankan alur kerja ini
+on:
+  # Memungkinkan alur kerja dijalankan secara manual dari UI GitHub
+  workflow_dispatch: {}
+  
+  # Berjalan saat ada pull request ke branch main atau master
+  pull_request:
+    branches:
+      - main
+      - master
+      
+  # Berjalan saat ada push (commit) ke branch main atau master
+  push:
+    branches:
+      - main
+      - master
+
+# Daftar pekerjaan (jobs) yang akan dieksekusi
+jobs:
+  # --- JOB 1: SEMGREP SCAN ---
+  # Melakukan pemindaian keamanan kode menggunakan Semgrep
+  semgrep:
+    name: Semgrep Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Hanya butuh izin untuk membaca kode
+    env:
+      # Token rahasia untuk menghubungkan ke dashboard Semgrep
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+    container:
+      # Menjalankan job di dalam container Docker yang sudah disiapkan Semgrep
+      image: semgrep/semgrep
+    steps:
+      # Langkah 1: Mengunduh kode dari repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      # Langkah 2: Menjalankan Semgrep CI
+      - name: Run Semgrep scan
+        run: semgrep ci
+
+  # --- JOB 2: VERCEL DEPLOYMENT ---
+  # Membangun (build) dan men-deploy aplikasi ke Vercel
+  vercel:
+    name: Build and Deploy to Vercel
+    runs-on: ubuntu-latest
+    # Job ini baru akan berjalan setelah job 'semgrep' selesai
+    needs: semgrep
+    # Mendefinisikan output yang akan dihasilkan oleh job ini
+    outputs:
+      preview_url: ${{ steps.vercel_deploy.outputs.preview-url }}
+      prod_url: ${{ steps.get_prod_url.outputs.prod_url }}
+    steps:
+      # Langkah 1: Mengunduh kode dari repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Langkah 2: Menyiapkan lingkungan Node.js versi 22
+      - name: Setup Node.js v22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          
+      # Langkah 3: Menginstal dependensi dan membangun proyek
+      - name: Install dependencies & build
+        run: |
+          npm install
+          npm run build
+          
+      # Langkah 4: Men-deploy ke Vercel
+      - name: Deploy to Vercel
+        id: vercel_deploy
+        uses: amondnet/vercel-action@v25
+        with:
+          # Deploy ke production jika di branch 'main' atau 'master'
+          vercel-args: '--prod'
+          # Token rahasia untuk otentikasi dengan Vercel
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          
+      # Langkah 5: Mendapatkan URL produksi yang pasti dari Vercel API
+      - name: Get Production URL
+        id: get_prod_url
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          RESPONSE=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/$PROJECT_ID/domains")
+          URL=$(echo "$RESPONSE" | jq -r '.domains[0].name')
+          echo "prod_url=https://$URL" >> $GITHUB_OUTPUT
+
+  # --- JOB 3: ZAP SCAN ---
+  # Melakukan pemindaian keamanan aplikasi web dengan OWASP ZAP
+  zap:
+    name: OWASP ZAP Baseline Scan
+    runs-on: ubuntu-latest
+    # Job ini baru akan berjalan setelah job 'vercel' selesai
+    needs: vercel
+    steps:
+      # Langkah 1: Menjalankan ZAP Baseline Scan terhadap URL produksi dari Vercel
+      - name: Run ZAP Baseline Scan
+        run: |
+          # Membuat nama report yang unik berdasarkan waktu
+          TIMESTAMP=$(date +%s)
+          REPORT_NAME="zap-report-${TIMESTAMP}.html"
+          REPORT_LOCATION="$HOME/zap-reports"
+          
+          # Mengambil URL produksi dari output job 'vercel'
+          TARGET_URL=${{ needs.vercel.outputs.prod_url }}
+          
+          echo "Scanning target: $TARGET_URL"
+          echo "Report will be saved as: $REPORT_NAME"
+          
+          # Membuat direktori untuk menyimpan report
+          mkdir -p "$REPORT_LOCATION"
+          
+          # Menjalankan ZAP scan menggunakan Docker
+          docker run --rm --user root \
+            -v "$REPORT_LOCATION":/zap/wrk \
+            zaproxy/zap-stable \
+            zap-baseline.py -t "$TARGET_URL" -r "$REPORT_NAME" -I
+            
+          # Meneruskan nama dan lokasi report ke langkah selanjutnya
+          echo "REPORT_NAME=${REPORT_NAME}" >> $GITHUB_ENV
+          echo "REPORT_LOCATION=${REPORT_LOCATION}" >> $GITHUB_ENV
+
+      # Langkah 2: Mengunggah hasil report sebagai artifact
+      - name: Upload ZAP HTML Report
+        uses: actions/upload-artifact@v4
+        with:
+          # Nama artifact yang akan muncul di ringkasan workflow
+          name: zap-baseline-report
+          # Path ke file report yang akan diunggah
+          path: ${{ env.REPORT_LOCATION }}/${{ env.REPORT_NAME }}
+ 
