@@ -51,7 +51,6 @@ jobs:
     needs: semgrep
     # Mendefinisikan output yang akan dihasilkan oleh job ini
     outputs:
-      preview_url: ${{ steps.vercel_deploy.outputs.preview-url }}
       prod_url: ${{ steps.get_prod_url.outputs.prod_url }}
     steps:
       # Langkah 1: Mengunduh kode dari repository
@@ -66,21 +65,22 @@ jobs:
           
       # Langkah 3: Menginstal dependensi dan membangun proyek
       - name: Install dependencies & build
+        # PENTING: Sesuaikan 'tinextjs' jika nama folder proyek Anda berbeda
+        working-directory: ./tinextjs 
         run: |
           npm install
           npm run build
           
       # Langkah 4: Men-deploy ke Vercel
       - name: Deploy to Vercel
-        id: vercel_deploy
         uses: amondnet/vercel-action@v25
         with:
-          # Deploy ke production jika di branch 'main' atau 'master'
           vercel-args: '--prod'
-          # Token rahasia untuk otentikasi dengan Vercel
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          # PENTING: Beritahu Vercel di mana letak proyeknya
+          vercel-project-directory: ./tinextjs
           
       # Langkah 5: Mendapatkan URL produksi yang pasti dari Vercel API
       - name: Get Production URL
@@ -135,5 +135,4 @@ jobs:
           # Nama artifact yang akan muncul di ringkasan workflow
           name: zap-baseline-report
           # Path ke file report yang akan diunggah
-          path: ${{ env.REPORT_LOCATION }}/${{ env.REPORT_NAME }}
- 
+          path: ${{ env.REPORT_LOCATION }}/${{ env.REPORT_NAME }} 
