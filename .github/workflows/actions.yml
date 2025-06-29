@@ -1,5 +1,4 @@
- # Nama alur kerja yang akan muncul di tab Actions di GitHub
-name: Vercel Production Deployment
+name: Deploy to Vercel & Run Security Scan
 
 on:
   push:
@@ -12,28 +11,31 @@ on:
       - master
 
 jobs:
-  # Kita gabungkan semua jadi satu job untuk kesederhanaan
+  # JOB PERTAMA: BUILD DAN DEPLOY APLIKASI
   deploy:
-    name: Build and Deploy
+    name: Build and Deploy to Vercel
     runs-on: ubuntu-latest
+    # Mendefinisikan output yang akan dikirim ke job selanjutnya
+    outputs:
+      prod_url: ${{ steps.get_prod_url.outputs.prod_url }}
     steps:
-      # Langkah 1: Checkout kode (tanpa submodule)
+      # 1. Checkout kode dari repository
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Langkah 2: Setup Node.js
+      # 2. Setup lingkungan Node.js
       - name: Setup Node.js v22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           
-      # Langkah 3: Install dependensi dan build
+      # 3. Install dependensi dan build proyek
       - name: Install dependencies & build
         run: |
           npm install
           npm run build
           
-      # Langkah 4: Deploy ke Vercel
+      # 4. Deploy ke Vercel
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v25
         with:
@@ -41,3 +43,45 @@ jobs:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          
+      # 5. Dapatkan URL produksi untuk dikirim ke job selanjutnya
+      - name: Get Production URL
+        id: get_prod_url
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          RESPONSE=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/$PROJECT_ID/domains")
+          URL=$(echo "$RESPONSE" | jq -r '.domains[0].name')
+          echo "prod_url=https://$URL" >> $GITHUB_OUTPUT
+
+  # JOB KEDUA: JALANKAN PEMINDAIAN KEAMANAN DENGAN ZAP
+  zap-scan:
+    name: OWASP ZAP Baseline Scan
+    runs-on: ubuntu-latest
+    # Job ini baru akan berjalan setelah job 'deploy' selesai
+    needs: deploy
+    steps:
+      # 1. Jalankan ZAP Baseline Scan terhadap URL yang didapat dari job 'deploy'
+      - name: Run ZAP Baseline Scan
+        run: |
+          # Mengambil URL produksi dari output job 'deploy'
+          TARGET_URL=${{ needs.deploy.outputs.prod_url }}
+          
+          echo "Scanning target: $TARGET_URL"
+          
+          # Menjalankan ZAP scan menggunakan Docker
+          docker run --rm --user root \
+            -v "$(pwd)/reports:/zap/wrk:rw" \
+            zaproxy/zap-stable \
+            zap-baseline.py -t "$TARGET_URL" -r "zap-report.html" -I
+
+      # 2. Unggah hasil report sebagai artifact yang bisa diunduh
+      - name: Upload ZAP HTML Report
+        uses: actions/upload-artifact@v4
+        with:
+          # Nama artifact yang akan muncul di ringkasan workflow
+          name: zap-baseline-report
+          # Path ke file report yang akan diunggah
+          path: reports/zap-report.html
+ 
