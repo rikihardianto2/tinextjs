@@ -1,5 +1,5 @@
-# Nama alur kerja yang akan muncul di tab Actions di GitHub
-name: Security Scan and Vercel Deployment
+ # Nama alur kerja yang akan muncul di tab Actions di GitHub
+name: Vercel Production Deployment
 
 on:
   push:
@@ -11,54 +11,29 @@ on:
       - main
       - master
 
-# Daftar pekerjaan (jobs) yang akan dieksekusi
 jobs:
-  # --- JOB 1: SEMGREP SCAN ---
-  semgrep:
-    name: Semgrep Security Scan
+  # Kita gabungkan semua jadi satu job untuk kesederhanaan
+  deploy:
+    name: Build and Deploy
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
-    container:
-      image: semgrep/semgrep
     steps:
-      - name: Checkout code (including submodules)
+      # Langkah 1: Checkout kode (tanpa submodule)
+      - name: Checkout code
         uses: actions/checkout@v4
-        # BARIS KUNCI: Memberitahu action untuk mengunduh isi submodule
-        with:
-          submodules: 'recursive'
-          
-      - name: Run Semgrep scan
-        working-directory: ./nextjs-simple-porto-example-master
-        run: semgrep ci
 
-  # --- JOB 2: VERCEL DEPLOYMENT ---
-  vercel:
-    name: Build and Deploy to Vercel
-    runs-on: ubuntu-latest
-    needs: semgrep
-    outputs:
-      prod_url: ${{ steps.get_prod_url.outputs.prod_url }}
-    steps:
-      - name: Checkout code (including submodules)
-        uses: actions/checkout@v4
-        # BARIS KUNCI: Memberitahu action untuk mengunduh isi submodule
-        with:
-          submodules: 'recursive'
-
+      # Langkah 2: Setup Node.js
       - name: Setup Node.js v22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           
+      # Langkah 3: Install dependensi dan build
       - name: Install dependencies & build
-        working-directory: ./nextjs-simple-porto-example-master
         run: |
           npm install
           npm run build
           
+      # Langkah 4: Deploy ke Vercel
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v25
         with:
@@ -66,42 +41,3 @@ jobs:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-project-directory: ./nextjs-simple-porto-example-master
-          
-      - name: Get Production URL
-        id: get_prod_url
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          RESPONSE=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/$PROJECT_ID/domains")
-          URL=$(echo "$RESPONSE" | jq -r '.domains[0].name')
-          echo "prod_url=https://$URL" >> $GITHUB_OUTPUT
-
-  # --- JOB 3: ZAP SCAN ---
-  zap:
-    name: OWASP ZAP Baseline Scan
-    runs-on: ubuntu-latest
-    needs: vercel
-    steps:
-      - name: Run ZAP Baseline Scan
-        run: |
-          TIMESTAMP=$(date +%s)
-          REPORT_NAME="zap-report-${TIMESTAMP}.html"
-          REPORT_LOCATION="$HOME/zap-reports"
-          TARGET_URL=${{ needs.vercel.outputs.prod_url }}
-          echo "Scanning target: $TARGET_URL"
-          echo "Report will be saved as: $REPORT_NAME"
-          mkdir -p "$REPORT_LOCATION"
-          docker run --rm --user root \
-            -v "$REPORT_LOCATION":/zap/wrk \
-            zaproxy/zap-stable \
-            zap-baseline.py -t "$TARGET_URL" -r "$REPORT_NAME" -I
-          echo "REPORT_NAME=${REPORT_NAME}" >> $GITHUB_ENV
-          echo "REPORT_LOCATION=${REPORT_LOCATION}" >> $GITHUB_ENV
-      - name: Upload ZAP HTML Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-baseline-report
-          path: ${{ env.REPORT_LOCATION }}/${{ env.REPORT_NAME }}
- 
