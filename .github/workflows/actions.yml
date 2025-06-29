@@ -1,109 +1,29 @@
-# Nama alur kerja yang akan muncul di tab Actions di GitHub
-name: Security Scan and Vercel Deployment
+name: '[DIAGNOSTIK] Lihat Struktur Folder'
 
-# Pemicu (trigger) untuk menjalankan alur kerja ini
 on:
-  workflow_dispatch: {}
   push:
     branches:
       - main
       - master
-  pull_request:
-    branches:
-      - main
-      - master
 
-# Daftar pekerjaan (jobs) yang akan dieksekusi
 jobs:
-  # --- JOB 1: SEMGREP SCAN ---
-  semgrep:
-    name: Semgrep Security Scan
+  investigasi:
+    name: Investigasi Struktur Folder
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
-    container:
-      image: semgrep/semgrep
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Run Semgrep scan
-        # Beritahu Semgrep di mana folder kode berada
-        working-directory: ./nextjs-simple-porto-example-master
-        run: semgrep ci
-
-  # --- JOB 2: VERCEL DEPLOYMENT ---
-  vercel:
-    name: Build and Deploy to Vercel
-    runs-on: ubuntu-latest
-    needs: semgrep
-    outputs:
-      prod_url: ${{ steps.get_prod_url.outputs.prod_url }}
-    steps:
-      - name: Checkout code
+      - name: Checkout kode dari repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js v22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          
       # =================================================================
-      # >> BAGIAN YANG DIPERBAIKI <<
+      # >> LANGKAH PALING PENTING <<
+      # Langkah ini akan menampilkan semua file dan folder di proyek Anda
+      # persis seperti yang dilihat oleh server GitHub.
       # =================================================================
-      - name: Install dependencies & build
-        # Pindah ke direktori proyek sebelum menjalankan npm
-        working-directory: ./nextjs-simple-porto-example-master
+      - name: Tampilkan Struktur Folder Secara Detail
         run: |
-          npm install
-          npm run build
-          
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-args: '--prod'
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          # Beritahu Vercel di mana letak proyeknya
-          vercel-project-directory: ./nextjs-simple-porto-example-master
-      # =================================================================
-          
-      - name: Get Production URL
-        id: get_prod_url
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          RESPONSE=$(curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v9/projects/$PROJECT_ID/domains")
-          URL=$(echo "$RESPONSE" | jq -r '.domains[0].name')
-          echo "prod_url=https://$URL" >> $GITHUB_OUTPUT
-
-  # --- JOB 3: ZAP SCAN ---
-  zap:
-    name: OWASP ZAP Baseline Scan
-    runs-on: ubuntu-latest
-    needs: vercel
-    steps:
-      - name: Run ZAP Baseline Scan
-        run: |
-          TIMESTAMP=$(date +%s)
-          REPORT_NAME="zap-report-${TIMESTAMP}.html"
-          REPORT_LOCATION="$HOME/zap-reports"
-          TARGET_URL=${{ needs.vercel.outputs.prod_url }}
-          echo "Scanning target: $TARGET_URL"
-          echo "Report will be saved as: $REPORT_NAME"
-          mkdir -p "$REPORT_LOCATION"
-          docker run --rm --user root \
-            -v "$REPORT_LOCATION":/zap/wrk \
-            zaproxy/zap-stable \
-            zap-baseline.py -t "$TARGET_URL" -r "$REPORT_NAME" -I
-          echo "REPORT_NAME=${REPORT_NAME}" >> $GITHUB_ENV
-          echo "REPORT_LOCATION=${REPORT_LOCATION}" >> $GITHUB_ENV
-      - name: Upload ZAP HTML Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-baseline-report
-          path: ${{ env.REPORT_LOCATION }}/${{ env.REPORT_NAME }}
+          echo "========================================="
+          echo "Menampilkan struktur folder dari direktori root:"
+          pwd
+          ls -R
+          echo "========================================="
  
